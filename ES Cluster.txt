@@ -234,21 +234,5 @@ kibana-kibana-648dcf88b-9mwjb   1/1     Running   0          12m   192.168.180.1
 ## 
 
 
-1- Why deploy the cluster in a specific way, what is your rationale?
-
-it's best to design high available elasticsearch to avoid single point of failure so i created loadbalancer which accept requests and proxy them to the 2 master nodes so if one of them failed the other one still can handle the requests
-
-2- Which metrics to look out for and why?
-
-Storage and RAM, elasticseach is a searchengine database it's used to handle huge amount of logs and indexes so type of disk (SSD, Magnetic) and more RAM are important
-
-3- What would the deploy, debug, backup, update/roll-back, maintenance processes be?  
-
-- deployment can be done using helm, jenkins or ansible
-- Kubectl logs && kubectl get events can be used to debug pods in cluster
-- Backup by generating snapshot from nodes or volumes and upload it to nfs
-- kubeadm upgrade can used to upgrade the cluster
-- kubectl edit used to maintenance pods or services 
-
 Thanks, 
 Best Regards
