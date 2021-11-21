@@ -1,9 +1,6 @@
-Greetings,
-
-Here is my deployment of HA ES cluster
 
 --- Resources:
- 2 VMs for ES (4 CPU, 8G RAM, 30G Disk, OS: Ubuntu 20.04)
+ 2 VMs for ES master nodes (4 CPU, 8G RAM, 30G Disk, OS: Ubuntu 20.04)
  1 VM Loadbalancer (1 CPU, 1G RAM, 20G Disk, OS: Ubuntu 20.04)
 
 >> 2 kuberenetes master nodes and 1 loadbalancer to proxy the traffic for high availability 
