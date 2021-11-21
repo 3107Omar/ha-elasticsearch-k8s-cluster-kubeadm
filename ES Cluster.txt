@@ -1,0 +1,254 @@
+Greetings,
+
+Here is my deployment of HA ES cluster
+
+--- Resources:
+ 2 VMs for ES (4 CPU, 8G RAM, 30G Disk, OS: Ubuntu 20.04)
+ 1 VM Loadbalancer (1 CPU, 1G RAM, 20G Disk, OS: Ubuntu 20.04)
+
+>> 2 kuberenetes master nodes and 1 loadbalancer to proxy the traffic for high availability 
+
+>> perform the below steps on all nodes
+
+###########################################################################################################################################################
+## Preparing nodes for Kubernetes cluster 
+## update the OS packages for all nodes
+
+root@es1:~# apt-get update
+root@es1:~# apt-get upgrade
+root@es1:~# apt-get install openssh-server
+
+## set hostname for each node
+#install net-tools
+
+root@es1:~# apt install net-tools
+root@es1:~# nmtui
+
+## then change hostname
+
+root@es1:~# reboot
+
+## Disable swap on all nodes
+
+root@es1:~# swapoff -a
+root@es1:~# vim /etc/fstab >> ## comment the line with swap
+
+## disable firewall or allow some ports on all nodes
+
+root@es1:~# systemctl stop ufw
+root@es1:~# systemctl disable ufw 
+
+## Make sure that the br_netfilter module is loaded
+
+root@es1:~# cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+br_netfilter
+EOF
+
+root@es1:~# cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+EOF
+root@es1:~# sysctl --system
+
+## Installing docker on all Nodes
+## Add Docker’s official GPG key:
+
+root@es1:~# apt install curl -y
+root@es1:~# curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+##set up the stable repository
+
+root@es1:~# echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+## update repo and install docker
+
+root@es1:~# apt-get update 
+root@es1:~# apt-get install docker-ce docker-ce-cli containerd.io -y
+
+## Configure the Docker daemon, in particular to use systemd for the management of the container’s cgroups.
+
+root@es1:~# sudo mkdir /etc/docker
+root@es1:~# cat <<EOF | sudo tee /etc/docker/daemon.json
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2"
+}
+EOF
+
+### check if docker daemon file created and cofigured on /etc/docker/ with ovelay2 
+
+root@es1:~# cat /etc/docker/daemon.json
+
+### Restart Docker and enable on boot
+
+root@es1:~# systemctl enable docker
+root@es1:~# systemctl daemon-reload
+root@es1:~# sudo systemctl restart docker
+
+7- Installing kubeadm, kubelet and kubectl 
+## Update the apt package index and install packages needed to use the Kubernetes apt repository
+
+root@es1:~# apt-get update
+root@es1:~# apt-get install -y apt-transport-https ca-certificates curl
+
+## Download the Google Cloud public signing key:
+
+root@es1:~# curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+
+## Add the Kubernetes apt repository:
+
+echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+## Update apt package index, install kubelet, kubeadm and kubectl, and pin their version:
+
+root@es1:~# apt-get update
+root@es1:~# apt-get install -y kubelet kubeadm kubectl
+root@es1:~# apt-mark hold kubelet kubeadm kubectl
+
+## Add the first control plane nodes to the load balancer and test the connection
+
+root@es1:~# nc -v 10.0.0.11 6443
+
+###############################################################################################################################################################################################
+
+>> preform the below steps on 1 master node:
+
+root@es1:~#  kubeadm init --control-plane-endpoint 10.0.0.11:6443 --pod-network-cidr=192.168.0.0/16 --upload-certs
+
+## To make kubectl work for your non-root user
+
+root@es1:~# mkdir -p $HOME/.kube
+root@es1:~# sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+root@es1:~# sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+## You can now join any number of the control-plane node running the following command on each as root:
+
+kubeadm join 10.0.0.11:6443 --token en2ce7.jv8e1c748nman0ql \
+        --discovery-token-ca-cert-hash sha256:91cd12ad9a30c72f1b313f3547228afb23283be18c0fc9a8fcd37f08779f3c58 \
+        --control-plane --certificate-key a931877ad7e914da9d48509c1c10bb0656a9a61a6acaf128031440ea7a059ce9
+
+## Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 10.0.0.11:6443 --token en2ce7.jv8e1c748nman0ql \
+        --discovery-token-ca-cert-hash sha256:91cd12ad9a30c72f1b313f3547228afb23283be18c0fc9a8fcd37f08779f3c58
+
+## Apply the CNI plugin Calico project
+## Install the Tigera Calico operator and custom resource definitions.
+
+root@es1:~# kubectl create -f https://docs.projectcalico.org/manifests/tigera-operator.yaml
+
+##>>Note: Before creating this manifest, read its contents and make sure its settings are correct for your environment. For example, you may need to change the default IP pool CIDR to match your pod network CIDR.
+## in our case 192.168.0.0/16
+## Install Calico by creating the necessary custom resource
+
+root@es1:~# kubectl create -f https://docs.projectcalico.org/manifests/custom-resources.yaml
+
+##Confirm that all of the pods are running
+
+root@es1:~# watch kubectl get pods -n calico-system
+
+## Remove the taints on the master so that you can schedule pods on it
+
+root@es1:~# kubectl taint nodes --all node-role.kubernetes.io/master-
+
+## Confirm that you now have a node in your cluster
+
+root@es1:/usr/local/bin# kubectl  get nodes
+NAME   STATUS   ROLES                  AGE   VERSION
+es1    Ready    control-plane,master   27m   v1.22.3
+
+## join the other master node to the cluster 
+## Note>> apply this command to the second node
+
+root@es2:~# kubeadm join 10.0.0.11:6443 --token en2ce7.jv8e1c748nman0ql \
+        --discovery-token-ca-cert-hash sha256:91cd12ad9a30c72f1b313f3547228afb23283be18c0fc9a8fcd37f08779f3c58 \
+        --control-plane --certificate-key a931877ad7e914da9d48509c1c10bb0656a9a61a6acaf128031440ea7a059ce9
+
+## install the calicoctl command line tool to manage Calico resources and perform administrative functions.
+
+root@es1:~# cd /usr/local/bin/
+root@es1:/usr/local/bin# curl -o calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.21.0/calicoctl" 
+root@es1:/usr/local/bin# chmod +x calicoctl
+
+## confirm that calico bgp peer established with other master node
+
+root@es1:~# calicoctl node status
+
+IPv4 BGP status
++--------------+-------------------+-------+----------+-------------+
+| PEER ADDRESS |     PEER TYPE     | STATE |  SINCE   |    INFO     |
++--------------+-------------------+-------+----------+-------------+
+| 10.0.0.8     | node-to-node mesh | up    | 16:39:36 | Established |
++--------------+-------------------+-------+----------+-------------+
+
+## confirm that 2 nodes are ready
+
+root@es1:/usr/local/bin# kubectl  get nodes
+NAME   STATUS   ROLES                  AGE   VERSION
+es1    Ready    control-plane,master   27m   v1.22.3
+es2    Ready    control-plane,master   10m   v1.22.3
+
+## then install helm to deploy kubernetes helm chart
+
+root@es1: curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+root@es1: chmod 700 get_helm.sh
+root@es1: ./get_helm.sh
+
+## get elastic helm chart to current path
+
+root@es1: git clone https://github.com/elastic/helm-charts.git
+
+## tweak elasticsearch values.yaml for your environment and apply it as variable on helm install
+
+root@es1: vim helm-chart/elasticsearch/values.yaml
+
+## Run Helm to deploy elasticsearch on the 2 nodes
+
+root@es1: helm install -f values.yaml elasticsearch helm-chart/elasticsearch 
+
+## wait for elasticsearch pod to get ready
+
+NAME                     READY   STATUS    RESTARTS   AGE   IP                NODE   NOMINATED NODE   READINESS GATES
+elasticsearch-master-0   1/1     Running   0          13m   192.168.180.12    es2    <none>           <none>
+elasticsearch-master-1   1/1     Running   0          13m   192.168.123.139   es1    <none>           <none>
+
+## now elasticsearch are ready 
+
+## now we deploy kibana ( monitoring tool for elasticsearch )
+
+root@es1:~# helm install kibana helm-chart/kibana
+
+## check pod is ready
+
+NAME                            READY   STATUS    RESTARTS   AGE   IP                NODE   NOMINATED NODE   READINESS GATES
+elasticsearch-master-0          1/1     Running   0          35m   192.168.180.12    es2    <none>           <none>
+elasticsearch-master-1          1/1     Running   0          35m   192.168.123.139   es1    <none>           <none>
+kibana-kibana-648dcf88b-9mwjb   1/1     Running   0          12m   192.168.180.13    es2    <none>           <none>
+
+## 
+
+
+1- Why deploy the cluster in a specific way, what is your rationale?
+
+it's best to design high available elasticsearch to avoid single point of failure so i created loadbalancer which accept requests and proxy them to the 2 master nodes so if one of them failed the other one still can handle the requests
+
+2- Which metrics to look out for and why?
+
+Storage and RAM, elasticseach is a searchengine database it's used to handle huge amount of logs and indexes so type of disk (SSD, Magnetic) and more RAM are important
+
+3- What would the deploy, debug, backup, update/roll-back, maintenance processes be?  
+
+- deployment can be done using helm, jenkins or ansible
+- Kubectl logs && kubectl get events can be used to debug pods in cluster
+- Backup by generating snapshot from nodes or volumes and upload it to nfs
+- kubeadm upgrade can used to upgrade the cluster
+- kubectl edit used to maintenance pods or services 
+
+Thanks, 
+Best Regards
